@@ -255,6 +255,7 @@ combine_static_libraries() {
 
     local libs=(
         "${base_dir}/${build_dir}/src/${release_dir}/libllama.a"
+        "${base_dir}/${build_dir}/common/${release_dir}/libcommon.a"
         "${base_dir}/${build_dir}/ggml/src/${release_dir}/libggml.a"
         "${base_dir}/${build_dir}/ggml/src/${release_dir}/libggml-base.a"
         "${base_dir}/${build_dir}/ggml/src/${release_dir}/libggml-cpu.a"
