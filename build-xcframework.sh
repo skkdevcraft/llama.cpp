@@ -7,6 +7,7 @@ VISIONOS_MIN_OS_VERSION=1.0
 TVOS_MIN_OS_VERSION=16.4
 
 BUILD_SHARED_LIBS=OFF
+LLAMA_BUILD_COMMON=ON
 LLAMA_BUILD_EXAMPLES=OFF
 LLAMA_BUILD_TOOLS=OFF
 LLAMA_BUILD_TESTS=OFF
@@ -31,6 +32,7 @@ COMMON_CMAKE_ARGS=(
     -DCMAKE_XCODE_ATTRIBUTE_STRIP_INSTALLED_PRODUCT=NO
     -DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM=ggml
     -DBUILD_SHARED_LIBS=${BUILD_SHARED_LIBS}
+    -DLLAMA_BUILD_COMMON=${LLAMA_BUILD_COMMON}
     -DLLAMA_BUILD_EXAMPLES=${LLAMA_BUILD_EXAMPLES}
     -DLLAMA_BUILD_TOOLS=${LLAMA_BUILD_TOOLS}
     -DLLAMA_BUILD_TESTS=${LLAMA_BUILD_TESTS}
@@ -116,6 +118,9 @@ setup_framework_structure() {
 
     # Copy all required headers (common for all platforms)
     cp include/llama.h             ${header_path}
+    cp common/chat.h               ${header_path}
+    cp common/sampling.h           ${header_path}
+    cp common/common.h             ${header_path}
     cp ggml/include/ggml.h         ${header_path}
     cp ggml/include/ggml-opt.h     ${header_path}
     cp ggml/include/ggml-alloc.h   ${header_path}
@@ -129,6 +134,9 @@ setup_framework_structure() {
     cat > ${module_path}module.modulemap << EOF
 framework module llama {
     header "llama.h"
+    header "chat.h"
+    header "sampling.h"
+    header "common.h"
     header "ggml.h"
     header "ggml-alloc.h"
     header "ggml-backend.h"
