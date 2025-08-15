@@ -118,6 +118,7 @@ setup_framework_structure() {
 
     # Copy all required headers (common for all platforms)
     cp include/llama.h             ${header_path}
+    cp include/llama-cpp.h         ${header_path}
     cp common/chat.h               ${header_path}
     cp common/sampling.h           ${header_path}
     cp common/common.h             ${header_path}
@@ -134,6 +135,7 @@ setup_framework_structure() {
     cat > ${module_path}module.modulemap << EOF
 framework module llama {
     header "llama.h"
+    header "llama-cpp.h"
     header "chat.h"
     header "sampling.h"
     header "common.h"
