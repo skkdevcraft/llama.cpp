@@ -56,6 +56,7 @@ static struct ggml_backend_metal_device_context {
     bool has_bfloat;
     bool use_bfloat;
     bool use_fusion;
+    bool has_simd_sum_and_max;
 
     int debug_fusion;
 
@@ -76,6 +77,7 @@ static struct ggml_backend_metal_device_context {
     /*.has_bfloat              =*/ false,
     /*.use_bfloat              =*/ false,
     /*.use_fusion              =*/ true,
+    /*.has_simd_sum_and_max    =*/ true,
     /*.debug_fusion            =*/ 0,
     /*.fuse_cnt                =*/ { 0 },
     /*.max_size                =*/ 0,
@@ -95,6 +97,8 @@ static id<MTLDevice> ggml_backend_metal_device_acq(struct ggml_backend_metal_dev
 
         ctx->has_simdgroup_reduction  = [ctx->mtl_device supportsFamily:MTLGPUFamilyApple7];
         ctx->has_simdgroup_reduction |= [ctx->mtl_device supportsFamily:MTLGPUFamilyMetal3_GGML];
+
+        ctx->has_simd_sum_and_max     = getenv("GGML_METAL_SIMD_SUM_AND_MAX_FALLBACK") == nil;
 
         ctx->has_simdgroup_mm = [ctx->mtl_device supportsFamily:MTLGPUFamilyApple7];
 
@@ -1137,6 +1141,7 @@ static struct ggml_backend_metal_context * ggml_metal_init(ggml_backend_dev_t de
     GGML_LOG_INFO("%s: has bfloat            = %s\n", __func__, ctx_dev->has_bfloat                  ? "true" : "false");
     GGML_LOG_INFO("%s: use bfloat            = %s\n", __func__, ctx_dev->use_bfloat                  ? "true" : "false");
     GGML_LOG_INFO("%s: hasUnifiedMemory      = %s\n", __func__, ctx_dev->mtl_device.hasUnifiedMemory ? "true" : "false");
+    GGML_LOG_INFO("%s: simd_sum and simd_max = %s\n", __func__, ctx_dev->has_simd_sum_and_max        ? "true" : "false");
 
     ctx->capture_next_compute = false;
     ctx->capture_started = false;
@@ -1164,9 +1169,8 @@ static struct ggml_backend_metal_context * ggml_metal_init(ggml_backend_dev_t de
         for (int i = 0; i < GGML_METAL_KERNEL_TYPE_COUNT; ++i) {
             ctx->kernels[i].pipeline = nil;
         }
-        BOOL kUseSimdOps = ctx_dev->has_simdgroup_reduction;
-        kUseSimdOps = true;
-        GGML_LOG_INFO("%s: use simd_sum and simd_max     = %s\n", __func__, kUseSimdOps ? "true" : "false");
+
+        BOOL kUseSimdOps = ctx_dev->has_simd_sum_and_max;
 
 #define GGML_METAL_ADD_KERNEL(e, name, supported) \
         if (supported) { \

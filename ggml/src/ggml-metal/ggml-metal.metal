@@ -32,20 +32,23 @@ inline T fallback_max(vec<T,N> v) {
 // ------------------ WRAPPERS ------------------
 // Scalar overloads: just return the input
 template <typename T>
-inline T kernel_simd_sum(T v) {
+inline T kernel_simd_sum(thread T v) {
     if (kUseSimdOps) {
-        return simd_sum(v);   // builtin on Apple7+
+        return simd_sum(v);   // builtin on Apple GPU Family 4+
     } else {
+        // This result is a wild approximation, to say the least,
+        // but for unsupported platforms it's an acceptable tradeoff.
         return v;
     }
-
 }
 
 template <typename T>
 inline T kernel_simd_max(T v) {
     if (kUseSimdOps) {
-        return simd_max(v);   // builtin on Apple7+
+        return simd_max(v);
     } else {
+        // This result is a wild approximation, to say the least,
+        // but for unsupported platforms it's an acceptable tradeoff.
         return v;
     }
 }
@@ -53,7 +56,7 @@ inline T kernel_simd_max(T v) {
 template <typename T, size_t N>
 inline T kernel_simd_sum(vec<T,N> v) {
     if (kUseSimdOps) {
-        return simd_sum(v);   // builtin on Apple7+
+        return simd_sum(v);
     } else {
         return fallback_sum(v);
     }
