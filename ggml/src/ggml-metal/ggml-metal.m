@@ -98,6 +98,7 @@ static id<MTLDevice> ggml_backend_metal_device_acq(struct ggml_backend_metal_dev
         ctx->has_simdgroup_reduction  = [ctx->mtl_device supportsFamily:MTLGPUFamilyApple7];
         ctx->has_simdgroup_reduction |= [ctx->mtl_device supportsFamily:MTLGPUFamilyMetal3_GGML];
 
+        // GGML_METAL_SIMD_SUM_AND_MAX_FALLBACK with any value will trigger fallback implementation
         ctx->has_simd_sum_and_max     = getenv("GGML_METAL_SIMD_SUM_AND_MAX_FALLBACK") == nil;
 
         ctx->has_simdgroup_mm = [ctx->mtl_device supportsFamily:MTLGPUFamilyApple7];
