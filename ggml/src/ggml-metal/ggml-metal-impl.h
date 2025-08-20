@@ -1,6 +1,9 @@
 #ifndef GGML_METAL_IMPL
 #define GGML_METAL_IMPL
 
+// Function constant indexes
+#define FC_IDX_USE_SIMD_OPS 0
+
 // kernel parameters for mat-vec threadgroups
 //
 // N_R0: number of src0 rows to process per simdgroup

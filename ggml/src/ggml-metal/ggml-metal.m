@@ -1164,16 +1164,26 @@ static struct ggml_backend_metal_context * ggml_metal_init(ggml_backend_dev_t de
         for (int i = 0; i < GGML_METAL_KERNEL_TYPE_COUNT; ++i) {
             ctx->kernels[i].pipeline = nil;
         }
+        BOOL kUseSimdOps = ctx_dev->has_simdgroup_reduction;
+        kUseSimdOps = true;
+        GGML_LOG_INFO("%s: use simd_sum and simd_max     = %s\n", __func__, kUseSimdOps ? "true" : "false");
 
 #define GGML_METAL_ADD_KERNEL(e, name, supported) \
         if (supported) { \
             struct ggml_metal_kernel * kernel = &ctx->kernels[e]; \
-            id<MTLFunction> metal_function = [metal_library newFunctionWithName:@"kernel_"#name]; \
+            MTLFunctionConstantValues *fc = [[MTLFunctionConstantValues alloc] init]; \
+            [fc setConstantValue:&kUseSimdOps type:MTLDataTypeBool atIndex:FC_IDX_USE_SIMD_OPS]; \
+            id<MTLFunction> metal_function = [metal_library newFunctionWithName:@"kernel_"#name constantValues:fc error:&error]; \
+            if (error) { \
+                GGML_LOG_ERROR("%s: error: newFunctionWithName: %s\n", __func__, [[error description] UTF8String]); \
+                return NULL; \
+            } \
             kernel->pipeline = [device newComputePipelineStateWithFunction:metal_function error:&error]; \
             GGML_LOG_DEBUG("%s: loaded %-40s %16p | th_max = %4d | th_width = %4d\n", __func__, "kernel_"#name, (void *) kernel->pipeline, \
                     (int) kernel->pipeline.maxTotalThreadsPerThreadgroup, \
                     (int) kernel->pipeline.threadExecutionWidth); \
             [metal_function release]; \
+            [fc release]; \
             if (error) { \
                 GGML_LOG_ERROR("%s: error: load pipeline error: %s\n", __func__, [[error description] UTF8String]); \
                 return NULL; \

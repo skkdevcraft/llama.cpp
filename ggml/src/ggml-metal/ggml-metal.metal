@@ -11,6 +11,63 @@ __embed_ggml-common.h__
 
 using namespace metal;
 
+// Function constant toggling simd-group usage
+constant bool kUseSimdOps [[function_constant(FC_IDX_USE_SIMD_OPS)]]; // specialized true/false at runtime
+
+// ------------------ FALLBACK HELPERS ------------------
+template <typename T, size_t N>
+inline T fallback_sum(vec<T,N> v) {
+    T s = v[0];
+    for (size_t i = 1; i < N; ++i) { s += v[i]; }
+    return s;
+}
+
+template <typename T, size_t N>
+inline T fallback_max(vec<T,N> v) {
+    T m = v[0];
+    for (size_t i = 1; i < N; ++i) { m = (v[i] > m) ? v[i] : m; }
+    return m;
+}
+
+// ------------------ WRAPPERS ------------------
+// Scalar overloads: just return the input
+template <typename T>
+inline T kernel_simd_sum(T v) {
+    if (kUseSimdOps) {
+        return simd_sum(v);   // builtin on Apple7+
+    } else {
+        return v;
+    }
+
+}
+
+template <typename T>
+inline T kernel_simd_max(T v) {
+    if (kUseSimdOps) {
+        return simd_max(v);   // builtin on Apple7+
+    } else {
+        return v;
+    }
+}
+
+template <typename T, size_t N>
+inline T kernel_simd_sum(vec<T,N> v) {
+    if (kUseSimdOps) {
+        return simd_sum(v);   // builtin on Apple7+
+    } else {
+        return fallback_sum(v);
+    }
+}
+
+template <typename T, size_t N>
+inline T kernel_simd_max(vec<T,N> v) {
+    if (kUseSimdOps) {
+        return simd_max(v);   // builtin on Apple7+
+    } else {
+        return fallback_max(v);
+    }
+}
+
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define SWAP(x, y) { auto tmp = (x); (x) = (y); (y) = tmp; }
@@ -1605,7 +1662,7 @@ kernel void kernel_sum_rows(
         sumf += src_row[i0];
     }
 
-    sumf = simd_sum(sumf);
+    sumf = kernel_simd_sum(sumf);
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -1674,7 +1731,7 @@ kernel void kernel_soft_max(
     }
 
     // find the max value in the block
-    float max_val = simd_max(lmax);
+    float max_val = kernel_simd_max(lmax);
     if (tptg.x > N_SIMDWIDTH) {
         if (sgitg == 0) {
             buf[tiisg] = -INFINITY;
@@ -1689,7 +1746,7 @@ kernel void kernel_soft_max(
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         max_val = buf[tiisg];
-        max_val = simd_max(max_val);
+        max_val = kernel_simd_max(max_val);
     }
 
     // parallel sum
@@ -1704,7 +1761,7 @@ kernel void kernel_soft_max(
     // ref: https://github.com/ggml-org/ggml/pull/621#discussion_r1425156335
     threadgroup_barrier(mem_flags::mem_none);
 
-    float sum = simd_sum(lsum);
+    float sum = kernel_simd_sum(lsum);
 
     if (tptg.x > N_SIMDWIDTH) {
         if (sgitg == 0) {
@@ -1720,7 +1777,7 @@ kernel void kernel_soft_max(
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         sum = buf[tiisg];
-        sum = simd_sum(sum);
+        sum = kernel_simd_sum(sum);
     }
 
     if (psrc2) {
@@ -1780,7 +1837,7 @@ kernel void kernel_soft_max_4(
 
     const float lmax = MAX(MAX(lmax4[0], lmax4[1]), MAX(lmax4[2], lmax4[3]));
 
-    float max_val = simd_max(lmax);
+    float max_val = kernel_simd_max(lmax);
     if (tptg.x > N_SIMDWIDTH) {
         if (sgitg == 0) {
             buf[tiisg] = -INFINITY;
@@ -1795,7 +1852,7 @@ kernel void kernel_soft_max_4(
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         max_val = buf[tiisg];
-        max_val = simd_max(max_val);
+        max_val = kernel_simd_max(max_val);
     }
 
     // parallel sum
@@ -1812,7 +1869,7 @@ kernel void kernel_soft_max_4(
     // ref: https://github.com/ggml-org/ggml/pull/621#discussion_r1425156335
     threadgroup_barrier(mem_flags::mem_none);
 
-    float sum = simd_sum(lsum);
+    float sum = kernel_simd_sum(lsum);
 
     if (tptg.x > N_SIMDWIDTH) {
         if (sgitg == 0) {
@@ -1828,7 +1885,7 @@ kernel void kernel_soft_max_4(
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         sum = buf[tiisg];
-        sum = simd_sum(sum);
+        sum = kernel_simd_sum(sum);
     }
 
     if (psrc2) {
@@ -2000,7 +2057,7 @@ kernel void kernel_ssm_scan_f32(
         float sumf = state * C[i0];
 
         // Sum the threads in the simd group => simd sum
-        sumf = simd_sum(sumf);
+        sumf = kernel_simd_sum(sumf);
 
         if (sgptg > 1) {
 
@@ -2021,7 +2078,7 @@ kernel void kernel_ssm_scan_f32(
                 if (tiisg < sgptg) {
                     sumf = shared[tiisg];
                 }
-                sumf = simd_sum(sumf);
+                sumf = kernel_simd_sum(sumf);
                 if (tiisg == 0) {
                     y[0] = sumf;
                 }
@@ -2116,7 +2173,7 @@ kernel void kernel_ssm_scan_f32_group(
         float sumf = state * C[i0];
 
         // Sum the threads in the simd group => simd sum
-        sumf = simd_sum(sumf);
+        sumf = kernel_simd_sum(sumf);
 
         // Once per simd group, place the group sum into the shared buffer
         if (tiisg == 0) {
@@ -2135,7 +2192,7 @@ kernel void kernel_ssm_scan_f32_group(
             if (tiisg < sgptg) {
                 sumf = shared[tiisg];
             }
-            sumf = simd_sum(sumf);
+            sumf = kernel_simd_sum(sumf);
             if (tiisg == 0) {
                 y[0] = sumf;
             }
@@ -2352,8 +2409,8 @@ kernel void kernel_argmax(
     }
 
     // find the argmax value in the block
-    float max_val = simd_max(lmax);
-    int32_t arg_val = simd_max(select(-1, larg, lmax == max_val));
+    float max_val = kernel_simd_max(lmax);
+    int32_t arg_val = kernel_simd_max(select(-1, larg, lmax == max_val));
 
     if (ntg > N_SIMDWIDTH) {
         if (sgitg == 0) {
@@ -2373,8 +2430,8 @@ kernel void kernel_argmax(
         max_val = shared_maxval[tiisg];
         arg_val = shared_argmax[tiisg];
 
-        float max_val_reduced   = simd_max(max_val);
-        int32_t arg_val_reduced = simd_max(select(-1, arg_val, max_val == max_val_reduced));
+        float max_val_reduced   = kernel_simd_max(max_val);
+        int32_t arg_val_reduced = kernel_simd_max(select(-1, arg_val, max_val == max_val_reduced));
 
         dst[tgpig] = arg_val_reduced;
 
@@ -2408,7 +2465,7 @@ kernel void kernel_norm(
         sumf4 += x[i00];
     }
     sumf = sumf4[0] + sumf4[1] + sumf4[2] + sumf4[3];
-    sumf = simd_sum(sumf);
+    sumf = kernel_simd_sum(sumf);
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -2419,7 +2476,7 @@ kernel void kernel_norm(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     sumf = shmem_f32[tiisg];
-    sumf = simd_sum(sumf);
+    sumf = kernel_simd_sum(sumf);
 
     const float mean = sumf/args.ne00;
 
@@ -2430,7 +2487,7 @@ kernel void kernel_norm(
         y[i00] = x[i00] - mean;
         sumf += dot(y[i00], y[i00]);
     }
-    sumf = simd_sum(sumf);
+    sumf = kernel_simd_sum(sumf);
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -2441,7 +2498,7 @@ kernel void kernel_norm(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     sumf = shmem_f32[tiisg];
-    sumf = simd_sum(sumf);
+    sumf = kernel_simd_sum(sumf);
 
     const float variance = sumf/args.ne00;
 
@@ -2486,7 +2543,7 @@ kernel void kernel_rms_norm_fuse_impl(
     for (int i00 = tpitg.x; i00 < args.ne00_4; i00 += ntg.x) {
         sumf += dot(x[i00], x[i00]);
     }
-    sumf = simd_sum(sumf);
+    sumf = kernel_simd_sum(sumf);
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -2497,7 +2554,7 @@ kernel void kernel_rms_norm_fuse_impl(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     sumf = shmem_f32[tiisg];
-    sumf = simd_sum(sumf);
+    sumf = kernel_simd_sum(sumf);
 
     const float mean  = sumf/args.ne00;
     const float scale = 1.0f/sqrt(mean + args.eps);
@@ -2544,7 +2601,7 @@ kernel void kernel_l2_norm(
     for (int i00 = tpitg; i00 < args.ne00_4; i00 += ntg) {
         sumf += dot(x[i00], x[i00]);
     }
-    sumf = simd_sum(sumf);
+    sumf = kernel_simd_sum(sumf);
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -2555,7 +2612,7 @@ kernel void kernel_l2_norm(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     sumf = shmem_f32[tiisg];
-    sumf = simd_sum(sumf);
+    sumf = kernel_simd_sum(sumf);
 
     const float scale = 1.0f/sqrt(max(sumf, args.eps));
 
@@ -2594,7 +2651,7 @@ kernel void kernel_group_norm(
     }
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    tmp = simd_sum(tmp);
+    tmp = kernel_simd_sum(tmp);
     if (ntg > N_SIMDWIDTH) {
         if (sgitg == 0) {
             buf[tiisg] = 0.0f;
@@ -2609,7 +2666,7 @@ kernel void kernel_group_norm(
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         tmp = buf[tiisg];
-        tmp = simd_sum(tmp);
+        tmp = kernel_simd_sum(tmp);
     }
 
     const float mean = tmp / gs;
@@ -2621,7 +2678,7 @@ kernel void kernel_group_norm(
         tmp += xi * xi;
     }
 
-    tmp = simd_sum(tmp);
+    tmp = kernel_simd_sum(tmp);
     if (ntg > N_SIMDWIDTH) {
         if (sgitg == 0) {
             buf[tiisg] = 0.0f;
@@ -2636,7 +2693,7 @@ kernel void kernel_group_norm(
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         tmp = buf[tiisg];
-        tmp = simd_sum(tmp);
+        tmp = kernel_simd_sum(tmp);
     }
 
     const float variance = tmp / gs;
@@ -2803,7 +2860,7 @@ void mul_vec_q_n_f32_impl(
     device float * dst_f32 = (device float *) dst + im*args.ne0*args.ne1 + r1*args.ne0;
 
     for (int row = 0; row < nr0; ++row) {
-        const float tot = simd_sum(sumf[row]);
+        const float tot = kernel_simd_sum(sumf[row]);
 
         if (tiisg == 0 && first_row + row < args.ne01) {
             dst_f32[first_row + row] = tot;
@@ -2921,7 +2978,7 @@ void kernel_mul_mv_q8_0_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0; ++row) {
-        const float tot = simd_sum(sumf[row]);
+        const float tot = kernel_simd_sum(sumf[row]);
 
         if (tiisg == 0 && first_row + row < args.ne01) {
             dst_f32[first_row + row] = tot;
@@ -3029,7 +3086,7 @@ void kernel_mul_mv_ext_q4_f32_impl(
             sumf[ir1] += simd_shuffle_down(sumf[ir1],  1);
         }
 
-        //sumf[ir1] = simd_sum(sumf[ir1]);
+        //sumf[ir1] = kernel_simd_sum(sumf[ir1]);
     }
 
     if (tx == 0) {
@@ -3133,7 +3190,7 @@ void kernel_mul_mv_ext_q4x4_f32_impl(
             sumf[ir1] += simd_shuffle_down(sumf[ir1],  1);
         }
 
-        //sumf[ir1] = simd_sum(sumf[ir1]);
+        //sumf[ir1] = kernel_simd_sum(sumf[ir1]);
     }
 
     if (tx == 0) {
@@ -3280,7 +3337,7 @@ void kernel_mul_mv_impl(
                 sumf += (T0) x[i] * (T1) y[i];
             }
 
-            float sum_all = simd_sum(sumf);
+            float sum_all = kernel_simd_sum(sumf);
             if (tiisg == 0) {
                 dst_f32[(uint64_t)r1*args.ne0 + r0] = sum_all;
             }
@@ -3303,7 +3360,7 @@ void kernel_mul_mv_impl(
                 sumf += dot((float4) x4[i], (float4) y4[i]);
             }
 
-            float sum_all = simd_sum(sumf);
+            float sum_all = kernel_simd_sum(sumf);
             if (tiisg == 0) {
                 for (int i = 4*(args.ne00/4); i < args.ne00; ++i) sum_all += (float) (x[i] * y[i]);
                 dst_f32[(uint64_t)r1*args.ne0 + r0] = sum_all;
@@ -3432,7 +3489,7 @@ kernel void kernel_mul_mv_1row(
         for (int i = tiisg; i < args.ne00; i += 32) {
             sumf += (float) x[i] * (float) y[i];
         }
-        float sum_all = simd_sum(sumf);
+        float sum_all = kernel_simd_sum(sumf);
         if (tiisg == 0) {
             dst_f32[r0] = sum_all;
         }
@@ -3444,7 +3501,7 @@ kernel void kernel_mul_mv_1row(
             sumf += dot((float4) x4[i], y4[i]);
         }
 
-        float sum_all = simd_sum(sumf);
+        float sum_all = kernel_simd_sum(sumf);
 
         if (tiisg == 0) {
             for (int i = 4*(args.ne00/4); i < args.ne00; ++i) sum_all += (float) (x[i] * y[i]);
@@ -3493,7 +3550,7 @@ kernel void kernel_mul_mv_l4(
             sumf += dot((float4) x4[i], y4[i]);
         }
 
-        float sum_all = simd_sum(sumf);
+        float sum_all = kernel_simd_sum(sumf);
         if (tiisg == 0) {
             dst_f32[(uint64_t)r1*args.ne0 + r0] = sum_all;
         }
@@ -4327,7 +4384,7 @@ kernel void kernel_flash_attn_ext(
                     smax = max(smax, m);
                 }
 
-                smax = simd_max(smax);
+                smax = kernel_simd_max(smax);
 
                 if (smax == -INFINITY) {
                     continue;
@@ -4429,12 +4486,12 @@ kernel void kernel_flash_attn_ext(
                     // mqk = mqk + mask*slope
                     s += slope*ss[j*TS + C + tiisg];
 
-                    M[j] = simd_max(max(M[j], s));
+                    M[j] = kernel_simd_max(max(M[j], s));
 
                     const float ms = exp(m - M[j]);
                     const float vs = exp(s - M[j]);
 
-                    S[j] = S[j]*ms + simd_sum(vs);
+                    S[j] = S[j]*ms + kernel_simd_sum(vs);
 
                     // the P matrix from the paper (Q rows, C columns)
                     ss[j*TS + tiisg] = vs;
@@ -4528,12 +4585,12 @@ kernel void kernel_flash_attn_ext(
                 const float m = M[j];
                 const float s = tiisg == 0 ? ((device const float *) sinks)[iq2] : -FLT_MAX/2;
 
-                M[j] = simd_max(max(M[j], s));
+                M[j] = kernel_simd_max(max(M[j], s));
 
                 const float ms = exp(m - M[j]);
                 const float vs = exp(s - M[j]);
 
-                S[j] = S[j]*ms + simd_sum(vs);
+                S[j] = S[j]*ms + kernel_simd_sum(vs);
 
                 if (tiisg == j) {
                     ss[j*TS + 2*C + j] = ms;
@@ -4862,7 +4919,7 @@ kernel void kernel_flash_attn_ext_vec(
             }
 
             // skip -INF blocks
-            if (simd_max(sm[tiisg]) == -INFINITY) {
+            if (kernel_simd_max(sm[tiisg]) == -INFINITY) {
                 continue;
             }
 
@@ -4941,12 +4998,12 @@ kernel void kernel_flash_attn_ext_vec(
                 const float m = M;
                 const float s = ss[tiisg];
 
-                M = simd_max(max(M, s));
+                M = kernel_simd_max(max(M, s));
 
                 const float ms = exp(m - M);
                 const float vs = exp(s - M);
 
-                S = S*ms + simd_sum(vs);
+                S = S*ms + kernel_simd_sum(vs);
 
                 // the P matrix from the paper (Q rows, C columns)
                 ss[tiisg] = vs;
@@ -4985,12 +5042,12 @@ kernel void kernel_flash_attn_ext_vec(
             const float m = M;
             const float s = tiisg == 0 ? ((device const float *) sinks)[iq2] : -FLT_MAX/2;
 
-            M = simd_max(max(M, s));
+            M = kernel_simd_max(max(M, s));
 
             const float ms = exp(m - M);
             const float vs = exp(s - M);
 
-            S = S*ms + simd_sum(vs);
+            S = S*ms + kernel_simd_sum(vs);
 
 #pragma unroll(DV4/NL)
             for (short ii = 0; ii < DV4; ii += NL) {
@@ -5585,7 +5642,7 @@ void kernel_mul_mv_q2_K_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all;
         }
@@ -5744,7 +5801,7 @@ void kernel_mul_mv_q3_K_f32_impl(
 
     for (int row = 0; row < nr0; ++row) {
         const float sumf = (sumf1[row] + 0.25f * sumf2[row]) / (1 << shift);
-        sumf1[row] = simd_sum(sumf);
+        sumf1[row] = kernel_simd_sum(sumf);
     }
 
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
@@ -5871,7 +5928,7 @@ void kernel_mul_mv_q4_K_f32_impl(
     device float * dst_f32 = (device float *) dst + (int64_t)im*args.ne0*args.ne1 + (int64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all;
         }
@@ -6002,7 +6059,7 @@ void kernel_mul_mv_q5_K_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        const float tot = simd_sum(sumf[row]);
+        const float tot = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = tot;
         }
@@ -6111,7 +6168,7 @@ void kernel_mul_mv_q6_K_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all;
         }
@@ -6219,7 +6276,7 @@ void kernel_mul_mv_iq2_xxs_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all * 0.25f;
         }
@@ -6335,7 +6392,7 @@ void kernel_mul_mv_iq2_xs_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all * 0.25f;
         }
@@ -6445,7 +6502,7 @@ void kernel_mul_mv_iq3_xxs_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all * 0.5f;
         }
@@ -6555,7 +6612,7 @@ void kernel_mul_mv_iq3_s_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all;
         }
@@ -6666,7 +6723,7 @@ void kernel_mul_mv_iq2_s_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all * 0.25f;
         }
@@ -6764,7 +6821,7 @@ void kernel_mul_mv_iq1_s_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all;
         }
@@ -6872,7 +6929,7 @@ void kernel_mul_mv_iq1_m_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all;
         }
@@ -6977,7 +7034,7 @@ void kernel_mul_mv_iq4_nl_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all;
         }
@@ -7082,7 +7139,7 @@ void kernel_mul_mv_iq4_xs_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all;
         }
@@ -7171,7 +7228,7 @@ void kernel_mul_mv_mxfp4_f32_impl(
     device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
 
     for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
-        float sum_all = simd_sum(sumf[row]);
+        float sum_all = kernel_simd_sum(sumf[row]);
         if (tiisg == 0) {
             dst_f32[first_row + row] = sum_all;
         }
